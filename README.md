@@ -1,6 +1,6 @@
 # Try - Go Port
 
-This is a Go port of Tobi's `try` script - a tool for managing experiment directories with fuzzy search and smart organization.
+This is a Go port of [Tobi's `try`](https://github.com/tobi/try) script - a tool for managing experiment directories with fuzzy search and smart organization.
 
 _My motivation for porting this originally came from the assumption that I would want to add a bunch of features that would be
 better suited to Go than Ruby, and also to work on some more Go stuff. But so far, the original features have been more than sufficient._
