@@ -207,6 +207,7 @@ type TrySelector struct {
 }
 
 const defaultTryPath = "~/src/tries"
+const defaultPromotePath = "~/dev"
 
 func NewTrySelector(searchTerm string, basePath string, initialInput string, testRenderOnce bool, testNoCLS bool, testKeys []string, testConfirm string) *TrySelector {
 	if basePath == "" {
@@ -486,6 +487,13 @@ func (ts *TrySelector) mainLoop() {
 			if ts.cursorPos < len(tries) {
 				ts.handleDelete(tries[ts.cursorPos])
 			}
+		case "\x12": // Ctrl-R
+			if ts.cursorPos < len(tries) {
+				ts.handlePromote(tries[ts.cursorPos])
+				if ts.selected != nil {
+					return
+				}
+			}
 		case "\x03", "\x1b": // Ctrl-C or ESC
 			ts.selected = nil
 			return
@@ -671,7 +679,7 @@ func (ts *TrySelector) render(tries []map[string]interface{}) {
 		ui.Println("{highlight}"+ts.deleteStatus+"{reset}", os.Stderr)
 		ts.deleteStatus = ""
 	} else {
-		ui.Println("{dim_text}↑↓/Ctrl-P,N,J,K: Navigate  Enter: Select  Ctrl-D: Delete  ESC: Cancel{reset}", os.Stderr)
+		ui.Println("{dim_text}↑↓/Ctrl-P,N,J,K: Navigate  Enter: Select  Ctrl-D: Delete  Ctrl-R: Promote  ESC: Cancel{reset}", os.Stderr)
 	}
 
 	// Flush the double buffer
@@ -752,6 +760,42 @@ func (ts *TrySelector) handleSelection(tryDir map[string]interface{}) {
 	ts.selected = map[string]interface{}{
 		"type": "cd",
 		"path": tryDir["path"].(string),
+	}
+}
+
+func (ts *TrySelector) handlePromote(tryDir map[string]interface{}) {
+	path := tryDir["path"].(string)
+	basename := tryDir["basename"].(string)
+	defaultDst := defaultPromoteDestination(basename)
+
+	ui.ClearScreen(os.Stderr)
+	ui.Println("{h2}Promote Directory", os.Stderr)
+	ui.Println("", os.Stderr)
+	ui.Println("Copy this try into a dev folder with rsync:", os.Stderr)
+	ui.Println(fmt.Sprintf("  {dim_text}from %s{reset}", path), os.Stderr)
+	ui.Println(fmt.Sprintf("  {dim_text}to   %s{reset}", defaultDst), os.Stderr)
+	ui.Println("", os.Stderr)
+	ui.Println("Enter destination path, or leave blank to use the default:", os.Stderr)
+	ui.Println("> ", os.Stderr)
+	ui.Flush(os.Stderr)
+	fmt.Fprint(os.Stderr, "\x1b[?25h")
+
+	reader := bufio.NewReader(os.Stdin)
+	dst, _ := reader.ReadString('\n')
+	dst = strings.TrimSpace(dst)
+	if dst == "" {
+		dst = defaultDst
+	} else {
+		dst = expandPath(dst)
+		if abs, err := filepath.Abs(dst); err == nil {
+			dst = abs
+		}
+	}
+
+	ts.selected = map[string]interface{}{
+		"type": "promote",
+		"path": dst,
+		"src":  path,
 	}
 }
 
@@ -1039,6 +1083,15 @@ func cmdCD(args []string, triesPath string, andType string, andExit bool, andKey
 		return nil
 	}
 
+	if result["type"] == "promote" {
+		return []map[string]string{
+			{"type": "target", "path": result["path"].(string)},
+			{"type": "mkdir"},
+			{"type": "rsync", "src": result["src"].(string)},
+			{"type": "cd"},
+		}
+	}
+
 	tasks := []map[string]string{
 		{"type": "target", "path": result["path"].(string)},
 	}
@@ -1120,6 +1173,42 @@ func isGitURI(arg string) bool {
 		strings.Contains(arg, "gitlab.com") || strings.HasSuffix(arg, ".git")
 }
 
+func defaultPromoteDestination(basename string) string {
+	basePath := os.Getenv("TRY_PROMOTE_PATH")
+	if basePath == "" {
+		basePath = defaultPromotePath
+	}
+	basePath = expandPath(basePath)
+	if abs, err := filepath.Abs(basePath); err == nil {
+		basePath = abs
+	}
+
+	re := regexp.MustCompile(`^\d{4}-\d{2}-\d{2}-(.+)$`)
+	matches := re.FindStringSubmatch(basename)
+	if len(matches) == 2 {
+		basename = matches[1]
+	}
+
+	return filepath.Join(basePath, basename)
+}
+
+func expandPath(path string) string {
+	path = os.ExpandEnv(path)
+	if path == "~" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return home
+		}
+	}
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
 func extractOptionWithValue(args []string, optName string) (string, []string) {
 	for i := len(args) - 1; i >= 0; i-- {
 		if args[i] == optName {
@@ -1176,6 +1265,8 @@ func parseTestKeys(spec string) []string {
 			keys = append(keys, "\n")
 		case "CTRL-K", "CTRLK":
 			keys = append(keys, "\x0B")
+		case "CTRL-R", "CTRLR":
+			keys = append(keys, "\x12")
 		default:
 			if strings.HasPrefix(token, "TYPE=") {
 				typeStr := strings.TrimPrefix(token, "TYPE=")
@@ -1232,6 +1323,10 @@ func emitTasksScript(tasks []map[string]string) {
 			} else {
 				parts = append(parts, fmt.Sprintf("/usr/bin/env sh -c 'if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then repo=$(git rev-parse --show-toplevel); git -C \"$repo\" worktree add --detach '%s' >/dev/null 2>&1 || true; fi; exit 0'", quoteForShell(fullPath)))
 			}
+		case "rsync":
+			src := strings.TrimRight(t["src"], "/") + "/"
+			dst := strings.TrimRight(fullPath, "/") + "/"
+			parts = append(parts, fmt.Sprintf("rsync -a '%s' '%s'", quoteForShell(src), quoteForShell(dst)))
 		case "touch":
 			parts = append(parts, fmt.Sprintf("touch '%s'", quoteForShell(fullPath)))
 		case "cd":
@@ -1336,6 +1431,7 @@ for fish shell, add to ~/.config/fish/config.fish:
 
 {h2}Defaults:{reset}
   Default path: {dim_text}~/src/tries{reset} (override with --path on commands)
+  Promote path: {dim_text}~/dev{reset} (override with TRY_PROMOTE_PATH)
   Current default: {dim_text}%s{reset}
 `
 

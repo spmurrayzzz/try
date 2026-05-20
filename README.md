@@ -16,6 +16,7 @@ better suited to Go than Ruby, and also to work on some more Go stuff. But so fa
 - **Git integration**:
   - Clone repositories into date-prefixed directories
   - Create git worktrees from existing repositories
+- **Promote tries** into real dev folders with `rsync`
 - **Shell integration** for Bash, Zsh, and Fish
 - **Zero dependencies** (except for terminal handling library)
 
@@ -76,12 +77,14 @@ try init [path]        # Generate shell function
 - `Enter` - Select or create directory
 - `Backspace` - Delete character from search
 - `Ctrl-D` - Delete directory (with confirmation)
+- `Ctrl-R` - Promote directory to a dev folder
 - `ESC` - Cancel
 - Type to filter/search
 
 ### Environment Variables
 
 - `TRY_PATH` - Override default directory (default: `~/src/tries`)
+- `TRY_PROMOTE_PATH` - Override promote destination (default: `~/dev`)
 
 ## Common Usage Patterns
 
@@ -104,6 +107,16 @@ try worktree . my-name  # Custom name
 # Create worktree from another repo
 try worktree /path/to/repo custom-name
 ```
+
+### Promoting an experiment
+```bash
+try                    # Select a try, then press Ctrl-R
+```
+
+Promotion copies the selected try into a dev folder with `rsync -a` and then
+changes into the promoted directory. By default, date prefixes are removed from
+the destination name, so `~/src/tries/2025-01-15-redis` promotes to
+`~/dev/redis`.
 
 ## Troubleshooting
 
